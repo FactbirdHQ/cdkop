@@ -12,9 +12,10 @@
  *
  * With PROBE_ADMIN=1 it also uses your own signed-in session (the desktop app
  * integration), for two more questions. First, what the service account holds
- * on the vault it created: whether it can read the items others put there, and
- * whether an administrator can take that away while it keeps managing who has
- * access. Second, whether CI could manage a vault it did not create: an
+ * on the vault it created: whether it can read an item the administrator puts
+ * there, and whether an administrator can take that away while it keeps
+ * managing who has access. Reads of the item record only whether they worked,
+ * never the item's value. Second, whether CI could manage a vault it did not create: an
  * administrator creates one and grants the service account `manage_vault` on
  * it with `op vault user grant`, then the service account tries to grant and
  * revoke a group there. That phase also reads grants and narrows one as the
@@ -79,9 +80,10 @@ const steps: Step[] = [];
  * Run `op` as the service account or as the administrator, record the step,
  * and return its stdout when it succeeded. An administrator call runs without
  * OP_SERVICE_ACCOUNT_TOKEN, which `op` would otherwise prefer over the
- * desktop app session.
+ * desktop app session. A `secret` call's successful output can hold an item's
+ * value, so the report keeps only that it succeeded.
  */
-function op(as: Actor, name: string, args: string[]): string | undefined {
+function op(as: Actor, name: string, args: string[], secret = false): string | undefined {
   const env = { ...process.env };
   if (as === 'administrator') {
     delete env.OP_SERVICE_ACCOUNT_TOKEN;
@@ -89,13 +91,14 @@ function op(as: Actor, name: string, args: string[]): string | undefined {
   const result = spawnSync(process.env.OP_BIN ?? 'op', args, { encoding: 'utf8', env });
   const ok = result.status === 0;
   const output = (ok ? result.stdout : result.stderr || result.stdout || String(result.error ?? '')).trim();
-  steps.push({ as, name, command: `op ${args.join(' ')}`, ok, output: output.slice(0, 2000) });
+  const recorded = ok && secret ? '(output not recorded: it can hold an item value)' : output.slice(0, 2000);
+  steps.push({ as, name, command: `op ${args.join(' ')}`, ok, output: recorded });
   console.info(`${ok ? '✓' : '✗'} [${as}] ${name}`);
   return ok ? result.stdout : undefined;
 }
 
-const sa = (name: string, args: string[]) => op('service account', name, args);
-const admin = (name: string, args: string[]) => op('administrator', name, args);
+const sa = (name: string, args: string[], secret = false) => op('service account', name, args, secret);
+const admin = (name: string, args: string[], secret = false) => op('administrator', name, args, secret);
 
 function json<T>(text: string | undefined): T | undefined {
   try {
@@ -148,7 +151,8 @@ if (me.url) {
   sa('whoami with --account (cdkop pins every call)', ['whoami', '--format=json', '--account', me.url]);
 }
 const serviceAccountId = me.user_uuid;
-const adminReady = withAdmin && administratorAvailable(serviceAccountId);
+const administratorId = withAdmin ? administratorAvailable(serviceAccountId) : undefined;
+const adminReady = administratorId !== undefined;
 
 // The reads cdkop's plan makes.
 sa('list vaults', ['vault', 'list', '--format=json']);
@@ -208,8 +212,8 @@ if (own) {
   sa('read the narrowed level', grant(own, group, 'view_items'));
   sa('revoke the rest', revoke(own, group));
 
-  if (adminReady && serviceAccountId) {
-    itemAccessPhase(own, serviceAccountId);
+  if (administratorId && serviceAccountId) {
+    itemAccessPhase(own, serviceAccountId, administratorId);
   }
   if (!deleteVault('service account', own) && !(adminReady && deleteVault('administrator', own))) {
     console.error(`Could not delete probe vault ${ownName} (${own}). Delete it in the admin console.`);
@@ -226,14 +230,14 @@ if (adminReady && serviceAccountId) {
 report();
 
 /**
- * Whether the session without the token is a person other than the service
- * account. A user session's whoami carries no user_type, only a service
- * account's does, so the two are told apart by user id.
+ * The administrator's user id, when the session without the token is a person
+ * other than the service account. A user session's whoami carries no
+ * user_type, only a service account's does, so the two are told apart by id.
  */
-function administratorAvailable(id: string | undefined): boolean {
+function administratorAvailable(id: string | undefined): string | undefined {
   if (!id) {
     console.error('The service account reported no user id. The administrator steps are skipped.');
-    return false;
+    return undefined;
   }
   const adminMe = json<{ user_type?: string; user_uuid?: string }>(admin('whoami', ['whoami', '--format=json']));
   if (!adminMe?.user_uuid || adminMe.user_uuid === id || adminMe.user_type === 'SERVICE_ACCOUNT') {
@@ -241,19 +245,61 @@ function administratorAvailable(id: string | undefined): boolean {
       'Without the token, op whoami reports no signed-in user, or the service account again. ' +
         'Sign in to the desktop app as an administrator to run the administrator steps. Skipped.',
     );
-    return false;
+    return undefined;
   }
-  return true;
+  return adminMe.user_uuid;
 }
 
 /**
  * What the service account holds on a vault it created: whether it can read
- * the items others put there, and whether an administrator can take that
+ * an item someone else puts there, and whether an administrator can take that
  * away while it keeps managing who has access.
+ *
+ * The administrator gives itself item access on the vault, which Owners and
+ * Administrators can because they hold `manage_vault` on it, and adds a
+ * throwaway Password item with a generated value. The item goes when the
+ * vault is deleted.
  */
-function itemAccessPhase(vault: string, id: string): void {
+function itemAccessPhase(vault: string, id: string, administrator: string): void {
   sa('list items in its own vault (item access)', ['item', 'list', '--vault', vault, '--format=json']);
   admin('list user grants on its vault (what does it hold?)', ['vault', 'user', 'list', vault, '--format=json']);
+  admin('give itself item access on the vault', [
+    'vault',
+    'user',
+    'grant',
+    '--vault',
+    vault,
+    '--user',
+    administrator,
+    '--permissions',
+    'view_items,create_items',
+    '--no-input',
+  ]);
+  const item = json<{ id: string }>(
+    admin(
+      'add a throwaway item',
+      [
+        'item',
+        'create',
+        '--category=password',
+        '--title',
+        `cdkop-probe-item-${stamp}`,
+        '--vault',
+        vault,
+        '--generate-password',
+        '--format=json',
+      ],
+      true,
+    ),
+  );
+  sa('list items after the administrator added one', ['item', 'list', '--vault', vault, '--format=json']);
+  if (item?.id) {
+    sa(
+      "read the administrator's item (can the CI token read secrets?)",
+      ['item', 'get', item.id, '--vault', vault, '--fields', 'type=concealed', '--reveal'],
+      true,
+    );
+  }
   admin('take its item access away, keep manage_vault', [
     'vault',
     'user',
@@ -267,7 +313,13 @@ function itemAccessPhase(vault: string, id: string): void {
     '--no-input',
   ]);
   admin('list user grants after taking item access away', ['vault', 'user', 'list', vault, '--format=json']);
-  sa('list items after losing item access', ['item', 'list', '--vault', vault, '--format=json']);
+  if (item?.id) {
+    sa(
+      "read the administrator's item after the revoke attempt",
+      ['item', 'get', item.id, '--vault', vault, '--fields', 'type=concealed', '--reveal'],
+      true,
+    );
+  }
   sa('grant the group view after losing item access', grant(vault, group, 'view_items'));
   sa('remove the group after losing item access', revoke(vault, group));
 }
