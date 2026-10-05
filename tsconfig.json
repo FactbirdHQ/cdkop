@@ -4,5 +4,5 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true
   },
-  "include": ["src", "examples", "test", "cicd"]
+  "include": ["src", "examples", "test", "cicd", "experiments"]
 }
