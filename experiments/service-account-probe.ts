@@ -206,16 +206,18 @@ if (withAdmin) {
 report();
 
 function administratorPhase(serviceAccountId: string | undefined): void {
-  const adminMe = json<{ user_type?: string }>(admin('whoami', ['whoami', '--format=json']));
-  if (!adminMe?.user_type || adminMe.user_type === 'SERVICE_ACCOUNT') {
-    console.error(
-      `Without the token, op whoami reports ${adminMe?.user_type ?? 'nothing'}. ` +
-        'Sign in to the desktop app as an administrator to run phase 2. Skipped.',
-    );
-    return;
-  }
   if (!serviceAccountId) {
     console.error('The service account reported no user id, so it cannot be granted a vault. Phase 2 skipped.');
+    return;
+  }
+  // A user session's whoami carries no user_type, only a service account's
+  // does, so tell the two apart by user id.
+  const adminMe = json<{ user_type?: string; user_uuid?: string }>(admin('whoami', ['whoami', '--format=json']));
+  if (!adminMe?.user_uuid || adminMe.user_uuid === serviceAccountId || adminMe.user_type === 'SERVICE_ACCOUNT') {
+    console.error(
+      'Without the token, op whoami reports no signed-in user, or the service account again. ' +
+        'Sign in to the desktop app as an administrator to run phase 2. Skipped.',
+    );
     return;
   }
 
