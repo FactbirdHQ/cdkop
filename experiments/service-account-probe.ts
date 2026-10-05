@@ -6,14 +6,19 @@
  * printed. The JSON it captures also settles the output shapes cdkop parses
  * (`docs/design.md`, "Assumptions still to check").
  *
- * With PROBE_ADMIN=1 it adds a second phase that also uses your own signed-in
- * session (the desktop app integration). An administrator creates a vault and
- * grants the service account `manage_vault` on it with `op vault user grant`,
- * then the service account tries to grant and revoke a group there. That is
- * the question of whether CI could manage vaults it did not create. The same
- * phase reads the vault's grants as the administrator and narrows a grant, to
- * see whether those work for an administrator where they failed for the
- * service account.
+ * It also checks the two workarounds a service account would need: reading a
+ * grant's level from the output of a grant that changes nothing, and
+ * narrowing a grant by removing the group and granting the smaller set.
+ *
+ * With PROBE_ADMIN=1 it also uses your own signed-in session (the desktop app
+ * integration), for two more questions. First, what the service account holds
+ * on the vault it created: whether it can read the items others put there, and
+ * whether an administrator can take that away while it keeps managing who has
+ * access. Second, whether CI could manage a vault it did not create: an
+ * administrator creates one and grants the service account `manage_vault` on
+ * it with `op vault user grant`, then the service account tries to grant and
+ * revoke a group there. That phase also reads grants and narrows one as the
+ * administrator, where both failed for the service account.
  *
  * Every write lands in a vault the run creates for the purpose, and the run
  * deletes each one at the end. It refuses to start unless the token's
@@ -125,10 +130,8 @@ function createVault(as: Actor, name: string): string | undefined {
 }
 
 /** Delete a vault this run created, by the id it was created with. */
-function deleteVault(as: Actor, name: string, id: string): void {
-  if (op(as, 'delete the probe vault', ['vault', 'delete', id]) === undefined) {
-    console.error(`Could not delete probe vault ${name} (${id}). Delete it in the admin console.`);
-  }
+function deleteVault(as: Actor, id: string): boolean {
+  return op(as, 'delete the probe vault', ['vault', 'delete', id]) !== undefined;
 }
 
 const stamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -144,6 +147,8 @@ if (me?.user_type !== 'SERVICE_ACCOUNT') {
 if (me.url) {
   sa('whoami with --account (cdkop pins every call)', ['whoami', '--format=json', '--account', me.url]);
 }
+const serviceAccountId = me.user_uuid;
+const adminReady = withAdmin && administratorAvailable(serviceAccountId);
 
 // The reads cdkop's plan makes.
 sa('list vaults', ['vault', 'list', '--format=json']);
@@ -192,35 +197,82 @@ if (own) {
   ]);
   sa('revoke part of the grant', revoke(own, group, 'view_item_history'));
   sa('revoke part of the grant by broad name', revoke(own, group, 'allow_viewing'));
+
+  // A grant prints the group's full resulting set, so granting something the
+  // group already holds reads its level without changing it.
+  sa('read the level by repeating a grant it already holds', grant(own, group, 'view_items'));
+  // Partial revokes fail for a service account, so narrow by removing the
+  // group and granting the smaller set.
+  sa('narrow, step 1: remove the group', revoke(own, group));
+  sa('narrow, step 2: grant the smaller set', grant(own, group, 'view_items,view_and_copy_passwords'));
+  sa('read the narrowed level', grant(own, group, 'view_items'));
   sa('revoke the rest', revoke(own, group));
-  deleteVault('service account', ownName, own);
+
+  if (adminReady && serviceAccountId) {
+    itemAccessPhase(own, serviceAccountId);
+  }
+  if (!deleteVault('service account', own) && !(adminReady && deleteVault('administrator', own))) {
+    console.error(`Could not delete probe vault ${ownName} (${own}). Delete it in the admin console.`);
+  }
 } else {
   console.error('The service account created no vault, so the phase 1 write probes did not run.');
 }
 
 // Phase 2: a vault an administrator creates and then hands the service account.
-if (withAdmin) {
-  administratorPhase(me.user_uuid);
+if (adminReady && serviceAccountId) {
+  administratorPhase(serviceAccountId);
 }
 
 report();
 
-function administratorPhase(serviceAccountId: string | undefined): void {
-  if (!serviceAccountId) {
-    console.error('The service account reported no user id, so it cannot be granted a vault. Phase 2 skipped.');
-    return;
+/**
+ * Whether the session without the token is a person other than the service
+ * account. A user session's whoami carries no user_type, only a service
+ * account's does, so the two are told apart by user id.
+ */
+function administratorAvailable(id: string | undefined): boolean {
+  if (!id) {
+    console.error('The service account reported no user id. The administrator steps are skipped.');
+    return false;
   }
-  // A user session's whoami carries no user_type, only a service account's
-  // does, so tell the two apart by user id.
   const adminMe = json<{ user_type?: string; user_uuid?: string }>(admin('whoami', ['whoami', '--format=json']));
-  if (!adminMe?.user_uuid || adminMe.user_uuid === serviceAccountId || adminMe.user_type === 'SERVICE_ACCOUNT') {
+  if (!adminMe?.user_uuid || adminMe.user_uuid === id || adminMe.user_type === 'SERVICE_ACCOUNT') {
     console.error(
       'Without the token, op whoami reports no signed-in user, or the service account again. ' +
-        'Sign in to the desktop app as an administrator to run phase 2. Skipped.',
+        'Sign in to the desktop app as an administrator to run the administrator steps. Skipped.',
     );
-    return;
+    return false;
   }
+  return true;
+}
 
+/**
+ * What the service account holds on a vault it created: whether it can read
+ * the items others put there, and whether an administrator can take that
+ * away while it keeps managing who has access.
+ */
+function itemAccessPhase(vault: string, id: string): void {
+  sa('list items in its own vault (item access)', ['item', 'list', '--vault', vault, '--format=json']);
+  admin('list user grants on its vault (what does it hold?)', ['vault', 'user', 'list', vault, '--format=json']);
+  admin('take its item access away, keep manage_vault', [
+    'vault',
+    'user',
+    'revoke',
+    '--vault',
+    vault,
+    '--user',
+    id,
+    '--permissions',
+    'allow_viewing,allow_editing',
+    '--no-input',
+  ]);
+  admin('list user grants after taking item access away', ['vault', 'user', 'list', vault, '--format=json']);
+  sa('list items after losing item access', ['item', 'list', '--vault', vault, '--format=json']);
+  sa('grant the group view after losing item access', grant(vault, group, 'view_items'));
+  sa('remove the group after losing item access', revoke(vault, group));
+}
+
+function administratorPhase(serviceAccountId: string): void {
   const name = `cdkop-probe-admin-${stamp}`;
   const vault = createVault('administrator', name);
   if (!vault) {
@@ -262,7 +314,9 @@ function administratorPhase(serviceAccountId: string | undefined): void {
   admin('confirm the service account grant landed', ['vault', 'group', 'list', vault, '--format=json']);
   sa('revoke the group on the handed-over vault', revoke(vault, group));
 
-  deleteVault('administrator', name, vault);
+  if (!deleteVault('administrator', vault)) {
+    console.error(`Could not delete probe vault ${name} (${vault}). Delete it in the admin console.`);
+  }
 }
 
 function report(): void {
