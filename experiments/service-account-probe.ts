@@ -86,7 +86,6 @@ if (me.url) {
 op('list vaults', ['vault', 'list', '--format=json']);
 const groups = json<Array<{ id: string; name: string }>>(op('list groups', ['group', 'list', '--format=json']));
 op('get the probe group', ['group', 'get', group, '--format=json']);
-op('list users (cdkop never does; for the record)', ['user', 'list', '--format=json']);
 if (foreignVault) {
   op('get a vault it did not create', ['vault', 'get', foreignVault, '--format=json']);
   op('list group grants on a vault it did not create', ['vault', 'group', 'list', foreignVault, '--format=json']);
@@ -131,6 +130,28 @@ if (created?.id && created.name === name) {
     ]);
   }
   op('list group grants after granting (the permissions shape)', ['vault', 'group', 'list', vault, '--format=json']);
+  // `vault group list` may leave permissions out of its JSON. Two other places
+  // that might report them: the human-readable table, and `vault list`
+  // filtered by group and permission (one call per permission).
+  op('list group grants after granting, as a table', ['vault', 'group', 'list', vault]);
+  op('vaults where the group has view_item_history', [
+    'vault',
+    'list',
+    '--group',
+    group,
+    '--permission',
+    'view_item_history',
+    '--format=json',
+  ]);
+  op('vaults where the group has manage_vault (expect none)', [
+    'vault',
+    'list',
+    '--group',
+    group,
+    '--permission',
+    'manage_vault',
+    '--format=json',
+  ]);
   op('revoke part of the grant', [
     'vault',
     'group',
@@ -141,6 +162,18 @@ if (created?.id && created.name === name) {
     group,
     '--permissions',
     'view_item_history',
+    '--no-input',
+  ]);
+  op('revoke part of the grant by broad name', [
+    'vault',
+    'group',
+    'revoke',
+    '--vault',
+    vault,
+    '--group',
+    group,
+    '--permissions',
+    'allow_viewing',
     '--no-input',
   ]);
   op('revoke the rest', ['vault', 'group', 'revoke', '--vault', vault, '--group', group, '--no-input']);
