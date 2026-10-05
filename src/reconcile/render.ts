@@ -36,6 +36,12 @@ export function describeNote(note: Note): string {
       return `vault ${note.name} is not declared (left alone)`;
     case 'undeclared-group':
       return `group ${note.name} is not declared (left alone)`;
+    case 'provisioning-enabled':
+      return (
+        `the account has a Provision Managers group, so provisioning looks enabled, but the definition declares no ` +
+        `ScimProvisioning and creates ${note.groups.join(', ')} itself. If the identity provider will push these ` +
+        'groups, declare ScimProvisioning instead, or the two will race to create them.'
+      );
   }
 }
 
@@ -61,8 +67,12 @@ export function renderPlan(
     lines.push('', `  ${summary(plan.changes)}`);
   }
 
+  const warnings = plan.notes.filter((n) => n.kind === 'provisioning-enabled');
   const awaiting = plan.notes.filter((n) => n.kind === 'awaiting-provisioning');
-  const undeclared = plan.notes.filter((n) => n.kind !== 'awaiting-provisioning');
+  const undeclared = plan.notes.filter((n) => n.kind === 'undeclared-vault' || n.kind === 'undeclared-group');
+  if (warnings.length > 0) {
+    lines.push('', 'Warning:', ...warnings.map((n) => `  ! ${describeNote(n)}`));
+  }
   if (awaiting.length > 0) {
     lines.push('', 'Awaiting SCIM provisioning:', ...awaiting.map((n) => `  … ${describeNote(n)}`));
   }

@@ -12,6 +12,9 @@ export interface Plan {
   readonly notes: Note[];
 }
 
+/** The built-in group 1Password adds to an account when provisioning is turned on. */
+const PROVISIONING_GROUP = 'Provision Managers';
+
 /** A definition that cannot be planned against this account as it stands. */
 export class PlanError extends Error {}
 
@@ -55,7 +58,7 @@ export function plan(desired: DesiredState, live: LiveState): Plan {
       const access = planAccess(group, found.id, vaults.ids, live);
       grants.push(...access.grants);
       revokes.push(...access.revokes);
-    } else if (group.externalGroup === undefined) {
+    } else if (group.externalGroup === undefined || desired.scim === undefined) {
       groupCreates.push({ kind: 'create-group', group });
       grants.push(...planAccess(group, undefined, vaults.ids, live).grants);
     } else {
@@ -71,6 +74,12 @@ export function plan(desired: DesiredState, live: LiveState): Plan {
     if (!matchedGroups.has(group.id)) {
       notes.push({ kind: 'undeclared-group', name: group.name });
     }
+  }
+  const selfCreated = groupCreates.flatMap((c) =>
+    c.kind === 'create-group' && c.group.externalGroup !== undefined ? [c.group.name] : [],
+  );
+  if (selfCreated.length > 0 && live.groups.some((g) => g.name === PROVISIONING_GROUP)) {
+    notes.push({ kind: 'provisioning-enabled', groups: selfCreated });
   }
 
   return {

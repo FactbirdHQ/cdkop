@@ -19,15 +19,18 @@ export interface GroupProps {
   readonly description?: string;
 
   /**
-   * The Entra ID security group this group is provisioned from.
+   * The identity provider group this group is provisioned from, by display
+   * name. cdkop never edits its name or description, or touches its members.
    *
-   * The SCIM bridge creates a 1Password group named after the Entra group and
-   * keeps its members in step with it, so cdkop neither creates the group nor
-   * touches its roster. It only grants vault access, once the group exists.
-   * Until then `plan` reports it as awaiting provisioning and defers its grants.
+   * When the definition declares `ScimProvisioning`, the SCIM bridge creates
+   * the group, named after the identity provider's group, and cdkop only grants
+   * it vault access once it exists. Until then `plan` reports it as awaiting
+   * provisioning and defers its grants. `cdkop scim` assigns every external
+   * group to the provisioning application, unless `ScimProvisioning` lists its
+   * groups explicitly.
    *
-   * Every external group is also assigned to the provisioning application by
-   * `cdkop scim`, unless `ScimProvisioning` lists its groups explicitly.
+   * Without `ScimProvisioning`, cdkop creates the group itself, under the same
+   * name, so the name is already right when provisioning arrives.
    */
   readonly externalGroup?: string;
 

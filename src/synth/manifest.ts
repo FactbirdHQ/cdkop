@@ -41,9 +41,9 @@ export interface GroupManifest {
   readonly previousName?: string;
   readonly description?: string;
   /**
-   * The Entra ID security group whose SCIM provisioning creates this group and
-   * owns its members. Set, cdkop never creates the group or touches its
-   * roster; it only grants the group vault access once it exists.
+   * The identity provider group this group is provisioned from. Its members
+   * are never touched. With `scim` declared, the bridge creates the group and
+   * cdkop waits for it; without, cdkop creates it.
    */
   readonly externalGroup?: string;
   /** Name of the enclosing group in the definition, whose grants this one inherits. */

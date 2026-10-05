@@ -81,4 +81,10 @@ export type Note =
       readonly grants: number;
     }
   | { readonly kind: 'undeclared-vault'; readonly name: string }
-  | { readonly kind: 'undeclared-group'; readonly name: string };
+  | { readonly kind: 'undeclared-group'; readonly name: string }
+  /**
+   * The definition declares no ScimProvisioning, so cdkop is creating groups
+   * an identity provider would otherwise create, yet the account has the
+   * group 1Password adds when provisioning is turned on.
+   */
+  | { readonly kind: 'provisioning-enabled'; readonly groups: string[] };

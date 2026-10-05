@@ -34,6 +34,9 @@ export interface ScimProvisioningProps {
  * The Entra ID side of SCIM provisioning into 1Password: which security groups
  * the enterprise application pushes through the SCIM bridge.
  *
+ * Declaring it also says the bridge creates every `externalGroup` group, so
+ * `plan` waits for those groups instead of creating them.
+ *
  * `cdkop scim` reconciles it over Microsoft Graph. It checks the tenant, finds
  * the application and its provisioning job, and assigns every declared group
  * that is not yet assigned. It only ever adds: a group assigned in Entra
