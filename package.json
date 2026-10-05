@@ -1,0 +1,48 @@
+{
+  "name": "@factbird/cdkop",
+  "version": "0.1.0",
+  "description": "Define a 1Password account's vaults, groups and vault access as Infrastructure-as-Code, built on the constructs programming model (inspired by AWS CDK).",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FactbirdHQ/cdkop.git"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*.js": "./src/*.ts"
+  },
+  "bin": {
+    "cdkop": "src/bin/cdkop.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "engines": {
+    "node": ">=22.18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "test": "bun test",
+    "synth": "bun src/bin/cdkop.ts synth examples/example.ts",
+    "plan": "bun src/bin/cdkop.ts plan",
+    "apply": "bun src/bin/cdkop.ts apply",
+    "synth:workflows": "bun cicd/main.ts",
+    "compile": "rm -rf dist && tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "constructs": "^10.4.2"
+  },
+  "devDependencies": {
+    "@factbird/cdkactions": "^2.1.2",
+    "@tsconfig/bun": "^1.0.11",
+    "@tsconfig/node-ts": "^23.6.4",
+    "@tsconfig/node22": "^22.0.6",
+    "@types/bun": "^1.2.0",
+    "@types/node": "^24",
+    "typescript": "^5.7.0"
+  }
+}

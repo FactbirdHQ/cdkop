@@ -1,0 +1,127 @@
+# Design notes
+
+## Why the `op` CLI
+
+Connect servers and service accounts read and write items, the Events API
+is read-only, and the SCIM bridge takes users and groups from an IdP. None of
+them can create a vault for a group or set its permissions. The `op` CLI,
+signed in as a person, can. That decides a lot. cdkop runs where a person can
+sign in, not in CI, and every read costs a process spawn, which is why a read
+runs four at a time.
+
+The client sits behind an interface. The tests drive the planner and applier
+against an in-memory account, and a test checks the arguments `CliOpClient`
+builds. Nothing in the suite touches a real account.
+
+## Who owns what
+
+Entra ID owns people. The SCIM bridge creates users, suspends leavers and
+fills the groups Entra pushes. cdkop owns the shape around them: which shared
+vaults exist, which groups exist beside the provisioned ones, and which group
+reaches which vault at which permissions.
+
+A declared group owns all of its vault access. That includes access to vaults
+the definition never mentions, because a group's reach is the thing worth
+reviewing, and half of it in code is worse than none. An undeclared group is
+left alone completely. That is the way to keep a group out of cdkop's hands,
+and it means an empty definition revokes nothing.
+
+The built-in groups (Owners, Administrators and the rest) can't be declared.
+Their access comes from 1Password's own rules, mostly through each vault's
+"allow administrators to manage" setting. Treating them like ordinary grants
+would invite a plan that locks the administrators out.
+
+## Nothing gets deleted
+
+Deleting a vault deletes its items. Deleting a group a provisioned user relies
+on takes their access mid-shift. Neither comes back with an `op` call. So
+cdkop has no delete. The client interface has no such method, and
+`test/never-deletes.test.ts` fails the build if a source file ever passes
+`delete`, `remove` or `rm` to `op`. Retiring a vault or a group is a decision
+made in the 1Password console by someone who has looked inside it.
+
+Revoking access is the only destructive change. It needs `--allow-delete`,
+and by default a prompt. Revoking is cheap to undo: the backup holds the grant
+as it was, and `op vault group grant` restores it.
+
+## Nested groups are a definition-only idea
+
+GitHub teams nest, and a child team inherits its parent's repositories. The
+team tree this tool is meant to mirror relies on that. 1Password groups are
+flat. Synthesis bridges the gap by giving every group its ancestors' grants
+directly, merged so the wider set wins. The tree lives in the definition and
+in the plan output. In 1Password, a child group holds the full union, and
+removing a grant from a parent shows up as revocations on each child.
+
+The alternative was making a child's members also members of the parent. That
+would need cdkop to own rosters, and rosters belong to Entra.
+
+## Permission sets are closed
+
+1Password rejects a grant whose prerequisites are missing, and a revoke can
+take dependants down with it. cdkop expands every set it handles, declared or
+live, to granular names closed under the prerequisite table. Two closed sets
+compare by equality. Granting the difference between them or revoking it
+leaves a closed set behind, so no partial grant or revoke trips over
+dependencies.
+
+`op` may report permissions this version has never heard of. The live reader
+drops them instead of failing, so a new 1Password permission shows as
+unmanaged rather than breaking every plan. cdkop targets 1Password Business
+only. The Teams plan has just the three broad permissions, and SCIM
+provisioning needs Business anyway.
+
+## Invisible vaults and pinned ids
+
+`op vault list` shows only the vaults the signed-in person can reach. A vault
+the administrators can't manage looks absent, and a definition naming it
+would propose creating a second vault with the same name. Pinning `id` closes
+that hole. A pinned vault is matched by id or fails the plan, and it is never
+created. `import` pins every vault it writes.
+
+Two live vaults or groups with the same name also fail the plan. Guessing
+would grant access to the wrong one.
+
+## SCIM, split in two
+
+The SCIM bridge is infrastructure, deployed wherever you host it, with a
+`scimsession` credential that lives outside git. cdkop leaves it alone. `ScimProvisioning` declares the Entra half, meaning which security
+groups the enterprise application pushes, and `cdkop scim` reconciles that
+over Microsoft Graph.
+
+`cdkop scim` only adds. It creates no application and no provisioning job,
+because provisioning already runs and a second job aimed at the same bridge
+would fight the first. It assigns missing groups, reports extra ones, and
+writes credentials only on `--rotate-token`, since a bad token stops
+provisioning for everyone. Two settings stay manual because 1Password exposes
+no API for them: turning provisioning on, and whether the IdP manages
+provisioned groups' memberships.
+
+A group's `externalGroup` does two jobs. It names the Entra group `scim`
+assigns, and it names the 1Password group the bridge creates, which takes the
+Entra display name. Keeping both in one prop stops the two names drifting.
+Until the group appears in 1Password, its grants wait, and `plan` says so
+instead of creating a hand-made group that the bridge would later collide
+with.
+
+The Graph client is a trimmed copy of cdkgithub's. The two tools share a
+tenant but no code, and a shared package for about two hundred lines did not
+seem worth it yet.
+
+## Assumptions still to check against a live account
+
+The `op` JSON this code parses comes from the CLI's help and documentation,
+not from a recorded session. The first `plan` against a real account should
+confirm:
+
+- `op vault get` reports `type`, which cdkop uses to skip personal vaults,
+  and `description`. Without `description`, vault descriptions are never
+  compared.
+- `op group list` reports `type`. Without it, cdkop falls back to the
+  built-in names.
+- `op vault group list` reports each group's `permissions`. A grant without
+  them is skipped, never revoked.
+- The bridge names a provisioned group after the Entra group's display name.
+
+Each of these fails safe. A missing field means less gets managed, not that
+something gets changed wrongly. That is no reason to skip checking them.
