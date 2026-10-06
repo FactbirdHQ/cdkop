@@ -129,8 +129,9 @@ seem worth it yet.
 
 The flow worth having is a pull request that asks for a vault, review, and
 CI applying it after merge. CI can only sign in to 1Password as a service
-account, and a service account is a narrow thing. Trying it against a live
-account (`experiments/service-account-probe.ts`) settled what it can do:
+account, and a service account is a narrow thing. Four runs against a live
+account settled what it can do, recorded in
+https://github.com/FactbirdHQ/cdkop/issues/2:
 
 - It sees only the vaults it created. An administrator can't hand it one;
   `op vault user grant` naming a service account is rejected.
