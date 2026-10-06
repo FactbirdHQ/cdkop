@@ -1,6 +1,6 @@
 {
   "name": "@factbird/cdkop",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Define a 1Password account's vaults, groups and vault access as Infrastructure-as-Code, built on the constructs programming model (inspired by AWS CDK).",
   "license": "Apache-2.0",
   "repository": {
