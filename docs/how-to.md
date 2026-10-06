@@ -120,6 +120,33 @@ creates the group in step 2's apply instead of waiting for the bridge.
 4. Declare `ScimProvisioning` and run `cdkop scim --yes`. The groups
    already exist, so `plan` has nothing to wait for.
 
+## Create vaults from CI
+
+1. As an administrator, create the service account CI runs as:
+
+   ```bash
+   op service-account create cdkop-ci --can-create-vaults --raw
+   ```
+
+   Store the token as a CI secret available only to the job that applies
+   after merge, and to nothing a pull request can run.
+2. Declare each vault CI should own with `owner: 'service-account'`, and
+   grant groups access to it as usual. The groups must already exist, which
+   SCIM provisioning takes care of.
+3. In CI, after merge, run with the token in `OP_SERVICE_ACCOUNT_TOKEN`:
+
+   ```bash
+   cdkop synth definition.ts
+   cdkop apply --yes --allow-delete=grants --require-approval never
+   ```
+
+4. Watch for item reads by the service account, through 1Password's Events
+   API or the activity log. cdkop never reads an item, so any read means the
+   token is in someone else's hands.
+
+The service account can read every item in the vaults it creates, and
+nobody can revoke that. Keep secrets CI must not hold out of these vaults.
+
 ## Rotate the SCIM bridge token
 
 1. Generate a new bearer token in 1Password's provisioning settings.

@@ -117,20 +117,48 @@ The Graph client is a trimmed copy of cdkgithub's. The two tools share a
 tenant but no code, and a shared package for about two hundred lines did not
 seem worth it yet.
 
-## Assumptions still to check against a live account
+## CI, and why a service account owns only its own vaults
 
-The `op` JSON this code parses comes from the CLI's help and documentation,
-not from a recorded session. The first `plan` against a real account should
-confirm:
+The flow worth having is a pull request that asks for a vault, review, and
+CI applying it after merge. CI can only sign in to 1Password as a service
+account, and a service account is a narrow thing. Trying it against a live
+account (`experiments/service-account-probe.ts`) settled what it can do:
 
-- `op vault get` reports `type`, which cdkop uses to skip personal vaults,
-  and `description`. Without `description`, vault descriptions are never
-  compared.
-- `op group list` reports `type`. Without it, cdkop falls back to the
-  built-in names.
-- `op vault group list` reports each group's `permissions`. A grant without
-  them is skipped, never revoked.
+- It sees only the vaults it created. An administrator can't hand it one;
+  `op vault user grant` naming a service account is rejected.
+- On its own vaults it can grant a group and remove one outright, but
+  `op` shows it no permissions, and revoking part of a grant fails.
+- It can read every item in a vault it created. That access appears in no
+  listing, and an administrator can't revoke it.
+
+So a service-account run manages only vaults declared as its own, and since
+it can't read levels it compares against a record of what its applies did,
+kept in 1Password beside the vaults. The record changes only for changes
+that landed. A diff between two commits would have been simpler, but after a
+failed apply it would forget a narrowing that never happened.
+
+Narrowing is a regrant: remove the group, grant the smaller set. The group
+loses access to that vault for the moment between the two calls.
+
+The last point is the price. The CI token can read the secrets in every vault
+CI creates, permanently. What contains it is outside cdkop: the token sits in
+a CI environment only the post-merge job can reach, and since cdkop never
+reads an item, any item read by the service account is an alarm.
+
+A run as a person still manages everything, CI's vaults included, because
+Owners and Administrators get `manage_vault` on every vault the service
+account creates. That run sees permissions, so it is also where drift in
+CI's vaults gets noticed.
+
+## What the live account confirmed
+
+The `op` output this code parses was checked against a live account:
+
+- `op vault get` reports `type` and `description`.
+- `op group list` reports no `type`, so the built-in groups are recognised by
+  name. `op group get` reports it. Both leave out an empty `description`.
+- `op vault group list` reports `permissions` as granular names to a person,
+  and leaves them out for a service account.
+- Revoking part of a grant works for a person.
 - The bridge names a provisioned group after the Entra group's display name.
-
-Each of these fails safe. A missing field means less gets managed, not that
-something gets changed wrongly. That is no reason to skip checking them.
+- `op whoami` reports `user_type` only for a service account.

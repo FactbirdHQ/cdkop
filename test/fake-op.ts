@@ -17,6 +17,8 @@ export interface FakeOpState {
   grants?: Record<string, LiveVaultGrant[]>;
   /** Calls whose name starts with one of these throw. */
   failOn?: string[];
+  /** Document contents by vault id, then title. */
+  documents?: Record<string, Record<string, string>>;
 }
 
 /** An in-memory 1Password account that records every write. */
@@ -25,6 +27,7 @@ export class FakeOp implements OpClient {
   readonly vaults: LiveVault[];
   readonly groups: LiveGroup[];
   readonly grants: Record<string, LiveVaultGrant[]>;
+  readonly documents: Record<string, Record<string, string>>;
   readonly calls: string[] = [];
   private readonly failOn: string[];
   private next = 1;
@@ -35,12 +38,14 @@ export class FakeOp implements OpClient {
       email: 'admin@example.com',
       userId: 'U',
       accountId: 'A',
+      serviceAccount: false,
       ...state.account,
     };
     this.vaults = [...(state.vaults ?? [])];
     this.groups = [...(state.groups ?? [])];
     this.grants = structuredClone(state.grants ?? {});
     this.failOn = state.failOn ?? [];
+    this.documents = structuredClone(state.documents ?? {});
   }
 
   private record(call: string): void {
@@ -59,8 +64,17 @@ export class FakeOp implements OpClient {
   async listGroups() {
     return [...this.groups];
   }
+  /** Like 1Password, a service account sees which groups have access but none of their permissions. */
   async listVaultGroups(vaultId: string) {
-    return structuredClone(this.grants[vaultId] ?? []);
+    const grants = structuredClone(this.grants[vaultId] ?? []);
+    return this.account.serviceAccount ? grants.map((g) => ({ ...g, permissions: [] })) : grants;
+  }
+  async readDocument(vaultId: string, title: string) {
+    return this.documents[vaultId]?.[title];
+  }
+  async writeDocument(vaultId: string, title: string, content: string) {
+    this.record(`writeDocument ${vaultId} ${title}`);
+    (this.documents[vaultId] ??= {})[title] = content;
   }
   async createVault(params: CreateVaultParams) {
     this.record(`createVault ${params.name}`);
@@ -93,6 +107,10 @@ export class FakeOp implements OpClient {
   }
   async revoke(vaultId: string, groupId: string, permissions: readonly Permission[] | 'all') {
     this.record(`revoke ${vaultId} ${groupId} ${permissions === 'all' ? 'all' : permissions.join(',')}`);
+    if (this.account.serviceAccount && permissions !== 'all') {
+      // 1Password: "the accessor doesn't have any permissions".
+      throw new Error('a service account cannot revoke part of a grant');
+    }
     const list = this.grants[vaultId] ?? [];
     const i = list.findIndex((g) => g.groupId === groupId);
     if (i < 0) {

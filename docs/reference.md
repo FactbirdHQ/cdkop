@@ -36,7 +36,7 @@ A definition whose `App` uses another `outdir` is left unstamped.
 
 | Command | Credential |
 | - | - |
-| plan, apply, import | The `op` session. Every call passes `--account <signInAddress>`. Set `OP_BIN` to run a different `op` binary. |
+| plan, apply, import | The `op` session. Every call passes `--account <signInAddress>`. Set `OP_BIN` to run a different `op` binary. With `OP_SERVICE_ACCOUNT_TOKEN` set, `op` signs in as that service account, and `plan` and `apply` switch to [service-account runs](#service-account-runs). |
 | scim | `AZURE_GRAPH_TOKEN`, else `az account get-access-token --resource https://graph.microsoft.com`. With `--rotate-token`, also the variable named by `tokenFrom`. |
 
 ## Constructs
@@ -67,6 +67,7 @@ Scope: the `Account`, directly.
 | `description` | `string` | create, update | Compared only when `op` reports a description for the live vault. |
 | `icon` | `string` | create | |
 | `allowAdminsToManage` | `boolean` | create | Unset leaves the account's default policy in force. |
+| `owner` | `'service-account'` | match only | A run as a service account plans only vaults with this owner. A run as a person manages them once they exist, and leaves creating them, and granting access to them, to the service account. |
 
 ### `Group`
 
@@ -143,10 +144,13 @@ eight, `allow_managing` is `manage_vault`.
 | `+ <group> → <vault>: <access>` | grant access the group does not have |
 | `~ <group> → <vault>: <from> -> <to>` | widen or narrow access |
 | `- <group> → <vault>: <access>` | remove the group from the vault |
+| `~ <group> → <vault>: <from> -> <to> (removes the group, then grants)` | set the access exactly, by removing the group and granting it again; `<from>` reads `unknown` when no record exists |
 
 Access prints as `view`, `edit` or `manage` when it is exactly that level,
 otherwise as the list of permissions. Changes run in this order: vault
-creates, vault updates, group creates, group updates, grants, revocations.
+creates, vault updates, group creates, group updates, grants, regrants,
+revocations. Regrants appear only in service-account runs, and like
+revocations they need `--allow-delete`.
 
 Notes follow the changes. "Warning" appears when the definition declares no
 `ScimProvisioning` and creates `externalGroup` groups itself, while the
@@ -154,7 +158,31 @@ account has a `Provision Managers` group, which 1Password adds when
 provisioning is turned on. "Awaiting SCIM provisioning" lists external groups
 that do not exist in 1Password yet, with how many grants wait on each. "Not
 declared" lists live vaults and non-built-in groups the definition does not
-mention.
+mention. "Skipped" lists, in a service-account run, the declared vaults it
+doesn't own, and in a person's run the service-account vaults that don't exist
+yet.
+
+## Service-account runs
+
+`op whoami` reporting `"user_type": "SERVICE_ACCOUNT"` switches `plan` and
+`apply` to this mode.
+
+| Aspect | Behaviour |
+| - | - |
+| Vaults | Only those declared with `owner: 'service-account'`. A missing one is created; the service account can see no other vault. |
+| Groups | Must exist. A missing `externalGroup` group is awaited when `ScimProvisioning` is declared. Any other missing group fails the plan. |
+| What it compares against | The applied-state record, not the account, because `op` shows a service account which groups can open a vault but not their permissions. |
+| A group the vault doesn't list | Granted its declared set. |
+| A recorded set narrower than declared | Granted the difference. |
+| A recorded set wider than declared, or no record | Regranted: removed, then granted the declared set. |
+| A group the vault lists that the definition doesn't grant | Removed, built-in groups excepted. |
+
+The applied-state record is the Document item `cdkop-applied-state` in the
+vault `cdkop state`, both created by the first service-account apply. It holds,
+by vault id, the vault's name and each group's permissions as of the last
+apply. An apply rewrites it with every change that landed, after the changes
+run and whether or not one failed. An administrator's `plan` leaves that
+vault out of "Not declared".
 
 ## Backup
 

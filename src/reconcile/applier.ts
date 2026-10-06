@@ -86,6 +86,10 @@ export async function apply(
         case 'revoke':
           await client.revoke(change.vaultId, change.groupId, change.remove);
           break;
+        case 'regrant':
+          await client.revoke(change.vaultId, change.groupId, 'all');
+          await client.grant(change.vaultId, change.groupId, change.permissions);
+          break;
       }
       record({ change, status: 'applied' });
     } catch (error) {

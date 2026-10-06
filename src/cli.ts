@@ -13,8 +13,10 @@ import { type AllowDelete, apply, deleteAllowed } from './reconcile/applier.ts';
 import { writeBackup } from './reconcile/backup.ts';
 import { type Change, DELETE_SCOPES, type DeleteScope, isDestructive } from './reconcile/changes.ts';
 import { readLiveState } from './reconcile/live.ts';
+import { planServiceAccount } from './reconcile/plan-service-account.ts';
 import { PlanError, plan } from './reconcile/planner.ts';
 import { describeChange, renderPlan } from './reconcile/render.ts';
+import { loadState, nextState, STATE_VAULT, saveState } from './reconcile/state.ts';
 import type { DesiredState } from './synth/manifest.ts';
 import { normaliseSignInAddress } from './synth/synthesizer.ts';
 
@@ -50,7 +52,8 @@ live state it read, the manifest, the plan, and a journal of each change.
 
 Auth: every read and write goes through \`op\`, pinned to the definition's
 account with --account. Sign in first (\`op signin\`) as an owner or an
-administrator who can manage groups and vaults; a service account cannot.
+administrator. With OP_SERVICE_ACCOUNT_TOKEN set, \`op\` runs as that service
+account, and plan and apply manage only vaults with owner 'service-account'.
 \`scim\` talks to Microsoft Graph with AZURE_GRAPH_TOKEN, else
 \`az account get-access-token\`.`;
 
@@ -245,12 +248,22 @@ function printProvenance(desired: DesiredState): void {
   }
 }
 
+/**
+ * Read the account and plan against it. A service account's session plans
+ * only the vaults it owns, against the record of what its applies did,
+ * because it can't read any grant's permissions.
+ */
 async function readPlan(flags: Flags, connect: Connect) {
   const desired = readManifest(flags.manifest);
   printProvenance(desired);
   const client = connect.op(desired.account.signInAddress);
   const live = await readLiveState(client, (line) => console.error(line));
-  return { desired, client, live, plan: plan(desired, live) };
+  if (!live.account.serviceAccount) {
+    return { desired, client, live, plan: plan(desired, live) };
+  }
+  console.info("Signed in as a service account: planning only vaults with owner 'service-account'.\n");
+  const state = await loadState(client, live);
+  return { desired, client, live, state, plan: planServiceAccount(desired, live, state) };
 }
 
 async function planCommand(flags: Flags, connect: Connect): Promise<number> {
@@ -263,7 +276,7 @@ async function planCommand(flags: Flags, connect: Connect): Promise<number> {
 }
 
 async function applyCommand(flags: Flags, connect: Connect): Promise<number> {
-  const { desired, client, live, plan: result } = await readPlan(flags, connect);
+  const { desired, client, live, state, plan: result } = await readPlan(flags, connect);
   const allowDelete = resolveAllowDelete(flags.allowDelete);
   console.info(
     renderPlan(desired.account.signInAddress, result, { allowDelete: (c) => deleteAllowed(c, allowDelete) }),
@@ -296,6 +309,14 @@ async function applyCommand(flags: Flags, connect: Connect): Promise<number> {
       console.info(`${mark} ${describeChange(record.change)}${record.error ? `\n    ${record.error}` : ''}`);
     },
   });
+
+  if (state) {
+    // Record what landed, failures included, so the next run retries what didn't.
+    const vaults = await client.listVaults();
+    const ids = new Map(vaults.map((v) => [v.name, v.id]));
+    await saveState(client, { ...live, vaults }, nextState(state, outcome.records, ids));
+    console.info(`Recorded what was applied in the vault "${STATE_VAULT}".`);
+  }
 
   const failed = outcome.records.find((r) => r.status === 'failed');
   if (failed) {
