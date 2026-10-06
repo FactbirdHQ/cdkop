@@ -8,7 +8,7 @@
  *
  * The README's relative images and links point at the GitHub repository.
  * npmjs.com renders the README on its own domain, where a path like
- * `docs/images/plan.png` resolves to nothing. An image becomes its raw file
+ * `docs/demo/cdkop.gif` resolves to nothing. An image becomes its raw file
  * and a link its page on GitHub, both at the release's tag, so a version's page
  * shows what that version shipped with. The README in the repository keeps its
  * relative paths, which GitHub resolves itself.

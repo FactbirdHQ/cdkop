@@ -3,6 +3,8 @@
 **Declare a 1Password account's vaults and who can reach them in TypeScript.
 Review the change in a pull request. Apply it from a plan you have read.**
 
+![cdkop synthesizing a definition, reading the account, printing the plan, asking before it revokes access, and applying each change](docs/demo/cdkop.gif)
+
 cdkop keeps shared vaults, groups and every group's vault permissions in one
 definition in git. It reads the live account through the `op` CLI, prints the
 difference, and applies it with `op`. Groups that Entra ID provisions through

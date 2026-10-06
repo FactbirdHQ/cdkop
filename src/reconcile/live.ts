@@ -28,7 +28,7 @@ const GRANT_CONCURRENCY = 4;
  */
 export async function readLiveState(client: OpClient, progress: (line: string) => void = () => {}): Promise<LiveState> {
   const [account, vaults, groups] = await Promise.all([client.whoami(), client.listVaults(), client.listGroups()]);
-  progress(`Read ${vaults.length} vaults and ${groups.length} groups; reading vault access...`);
+  progress(`Read ${count(vaults.length, 'vault')} and ${count(groups.length, 'group')}; reading vault access...`);
   const perVault = await mapLimit(vaults, GRANT_CONCURRENCY, (v) => client.listVaultGroups(v.id));
   return {
     account,
@@ -36,4 +36,9 @@ export async function readLiveState(client: OpClient, progress: (line: string) =
     groups: groups.filter((g) => g.state !== 'DELETED'),
     grants: Object.fromEntries(vaults.map((v, i) => [v.id, perVault[i]!])),
   };
+}
+
+/** `1 vault`, `2 vaults`. */
+function count(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? '' : 's'}`;
 }
