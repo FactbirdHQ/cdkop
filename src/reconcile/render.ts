@@ -45,8 +45,9 @@ export function describeNote(note: Note): string {
     case 'provisioning-enabled':
       return (
         `the account has a Provision Managers group, so provisioning looks enabled, but the definition declares no ` +
-        `ScimProvisioning and creates ${note.groups.join(', ')} itself. If the identity provider will push these ` +
-        'groups, declare ScimProvisioning instead, or the two will race to create them.'
+        `ScimProvisioning and creates ${note.groups.join(', ')} itself. Add each one to the provisioning ` +
+        "integration's managed groups in the 1Password console before its identity provider group is assigned, " +
+        'or the bridge may create a second group under the same name.'
       );
   }
 }

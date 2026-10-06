@@ -116,9 +116,16 @@ creates the group in step 2's apply instead of waiting for the bridge.
    access. Add members in the 1Password console.
 3. When provisioning is set up, add each group to the provisioning
    integration's managed groups in the 1Password console, so the bridge
-   takes over its members.
-4. Declare `ScimProvisioning` and run `cdkop scim --yes`. The groups
-   already exist, so `plan` has nothing to wait for.
+   takes over its members. Do it before step 4: 1Password's setup guide
+   warns that a group missing from that list can end up duplicated.
+4. Declare `ScimProvisioning` and run `cdkop scim --yes`, which assigns the
+   identity provider groups. The groups already exist, so `plan` has
+   nothing to wait for.
+
+Handing a group to provisioning is one-way as far as 1Password documents
+it. Once the integration manages a group, the identity provider owns its
+name and members, and no way to release it is documented short of turning
+provisioning off for the whole account. Its vault access stays with cdkop.
 
 ## Create vaults from CI
 
