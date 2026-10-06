@@ -25,6 +25,8 @@ export function describeChange(change: Change): string {
       const kept = change.from.filter((p) => !remove.includes(p));
       return `~ ${change.group} → ${change.vault}: ${access(change.from)} -> ${access(kept)}`;
     }
+    case 'regrant':
+      return `~ ${change.group} → ${change.vault}: ${change.from ? access(change.from) : 'unknown'} -> ${access(change.permissions)} (removes the group, then grants)`;
   }
 }
 
@@ -36,6 +38,10 @@ export function describeNote(note: Note): string {
       return `vault ${note.name} is not declared (left alone)`;
     case 'undeclared-group':
       return `group ${note.name} is not declared (left alone)`;
+    case 'left-to-administrator':
+      return `${note.vaults.join(', ')}: not owned by the service account, so only an administrator's run manages them`;
+    case 'left-to-service-account':
+      return `${note.vaults.join(', ')}: not created yet; the service account creates them and grants their access`;
     case 'provisioning-enabled':
       return (
         `the account has a Provision Managers group, so provisioning looks enabled, but the definition declares no ` +
@@ -71,6 +77,10 @@ export function renderPlan(
   const warnings = plan.notes.filter((n) => n.kind === 'provisioning-enabled');
   const awaiting = plan.notes.filter((n) => n.kind === 'awaiting-provisioning');
   const undeclared = plan.notes.filter((n) => n.kind === 'undeclared-vault' || n.kind === 'undeclared-group');
+  const skipped = plan.notes.filter((n) => n.kind === 'left-to-administrator' || n.kind === 'left-to-service-account');
+  if (skipped.length > 0) {
+    lines.push('', 'Skipped:', ...skipped.map((n) => `  · ${describeNote(n)}`));
+  }
   if (warnings.length > 0) {
     lines.push('', 'Warning:', ...warnings.map((n) => `  ! ${describeNote(n)}`));
   }
@@ -87,8 +97,10 @@ function summary(changes: readonly Change[]): string {
   const creates = changes.filter((c) => c.kind === 'create-vault' || c.kind === 'create-group').length;
   const grants = changes.filter((c) => c.kind === 'grant').length;
   const updates = changes.filter((c) => c.kind === 'update-vault' || c.kind === 'update-group').length;
-  const revokes = changes.filter(isDestructive).length;
-  return `${creates} to create, ${updates} to update, ${grants} to grant, ${revokes} to revoke.`;
+  const revokes = changes.filter((c) => c.kind === 'revoke').length;
+  const regrants = changes.filter((c) => c.kind === 'regrant').length;
+  const regranted = regrants > 0 ? `, ${regrants} to regrant` : '';
+  return `${creates} to create, ${updates} to update, ${grants} to grant${regranted}, ${revokes} to revoke.`;
 }
 
 function fields(list: readonly { field: string; from: string | undefined; to: string }[]): string {

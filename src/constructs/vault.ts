@@ -1,5 +1,7 @@
 import { Construct } from 'constructs';
 
+import type { VaultOwner } from '../synth/manifest.ts';
+
 export interface VaultProps {
   /** The vault's name in 1Password. Defaults to the construct id. */
   readonly name?: string;
@@ -31,6 +33,18 @@ export interface VaultProps {
    * only. Left unset, the account's default policy decides.
    */
   readonly allowAdminsToManage?: boolean;
+
+  /**
+   * `service-account` to have a service account create and manage the vault,
+   * as `cdkop apply` does in CI.
+   *
+   * A service account sees only the vaults it created, so a run as one plans
+   * these vaults and nothing else. A run as a person manages them once they
+   * exist, but never creates one: the service account couldn't see it, and
+   * would create a second. Mind that a service account can read every item in
+   * a vault it created, and 1Password offers no way to revoke that.
+   */
+  readonly owner?: VaultOwner;
 }
 
 /**

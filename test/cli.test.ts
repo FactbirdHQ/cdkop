@@ -116,3 +116,32 @@ describe('parseFlags', () => {
     expect(() => parseFlags(['--force'])).toThrow('Unknown option: --force');
   });
 });
+
+describe('cdkop apply as a service account', () => {
+  test('applies only its own vaults and records what it did', async () => {
+    write({
+      version: 1,
+      account: { signInAddress: 'example.1password.com' },
+      vaults: [{ name: 'Payments', owner: 'service-account' }, { name: 'Shared' }],
+      groups: [{ name: 'SG-Finance', vaults: { Payments: [...LEVELS.view], Shared: [...LEVELS.view] } }],
+    });
+    const op = new FakeOp({
+      account: { serviceAccount: true },
+      groups: [{ id: 'g1', name: 'SG-Finance', type: 'USER_DEFINED' }],
+    });
+    const args = ['apply', '--manifest', manifest, '--yes', '--require-approval', 'never'];
+    expect(await main(args, connect(op))).toBe(0);
+    expect(op.calls).toEqual([
+      'createVault Payments',
+      `grant v1 g1 ${LEVELS.view.join(',')}`,
+      'createVault cdkop state',
+      'writeDocument v2 cdkop-applied-state',
+    ]);
+    expect(out.join('\n')).toContain("planning only vaults with owner 'service-account'");
+    expect(out.join('\n')).toContain('Shared: not owned by the service account');
+
+    out.length = 0;
+    expect(await main(['plan', '--manifest', manifest], connect(op))).toBe(0);
+    expect(out.join('\n')).toContain('No changes.');
+  });
+});

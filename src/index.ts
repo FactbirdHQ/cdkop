@@ -19,6 +19,7 @@ export type {
   ManifestProvenance,
   ScimProvisioningManifest,
   VaultManifest,
+  VaultOwner,
 } from './synth/manifest.ts';
 export {
   BROAD_PERMISSIONS,

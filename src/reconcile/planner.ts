@@ -5,6 +5,7 @@ import type { Permission } from '../synth/permissions.ts';
 import { normaliseSignInAddress } from '../synth/synthesizer.ts';
 import type { Change, FieldChange, Grant, Note, Revoke } from './changes.ts';
 import type { LiveState } from './live.ts';
+import { STATE_VAULT } from './state.ts';
 
 export interface Plan {
   /** In execution order: vaults, then groups, then grants, then revocations. */
@@ -18,6 +19,17 @@ const PROVISIONING_GROUP = 'Provision Managers';
 /** A definition that cannot be planned against this account as it stands. */
 export class PlanError extends Error {}
 
+/** Refuse a session signed into another account than the definition declares. */
+export function assertAccount(desired: DesiredState, live: LiveState): void {
+  const reached = normaliseSignInAddress(live.account.url);
+  if (reached !== desired.account.signInAddress) {
+    throw new PlanError(
+      `The op session reaches ${reached || 'no account'}, but the definition declares ${desired.account.signInAddress}. ` +
+        'Sign into the declared account and re-run.',
+    );
+  }
+}
+
 /**
  * Compare the desired state with the live account and list what `apply` would
  * do. Pure: it reads nothing and writes nothing.
@@ -28,13 +40,7 @@ export class PlanError extends Error {}
  * never touched.
  */
 export function plan(desired: DesiredState, live: LiveState): Plan {
-  const reached = normaliseSignInAddress(live.account.url);
-  if (reached !== desired.account.signInAddress) {
-    throw new PlanError(
-      `The op session reaches ${reached || 'no account'}, but the definition declares ${desired.account.signInAddress}. ` +
-        'Sign into the declared account and re-run.',
-    );
-  }
+  assertAccount(desired, live);
 
   const vaults = planVaults(desired, live);
   const groupCreates: Change[] = [];
@@ -55,12 +61,12 @@ export function plan(desired: DesiredState, live: LiveState): Plan {
           groupUpdates.push({ kind: 'update-group', id: found.id, group, fields });
         }
       }
-      const access = planAccess(group, found.id, vaults.ids, live);
+      const access = planAccess(group, found.id, vaults.ids, vaults.waiting, live);
       grants.push(...access.grants);
       revokes.push(...access.revokes);
     } else if (group.externalGroup === undefined || desired.scim === undefined) {
       groupCreates.push({ kind: 'create-group', group });
-      grants.push(...planAccess(group, undefined, vaults.ids, live).grants);
+      grants.push(...planAccess(group, undefined, vaults.ids, vaults.waiting, live).grants);
     } else {
       notes.push({
         kind: 'awaiting-provisioning',
@@ -94,8 +100,16 @@ function planVaults(desired: DesiredState, live: LiveState) {
   const updates: Change[] = [];
   const notes: Note[] = [];
   const ids = new Map<string, string>();
+  // A service-account vault created by a person would be invisible to the
+  // service account, which would then create a second one. So only the
+  // service account creates them, and their grants wait until it has.
+  const waiting = new Set<string>();
   for (const vault of desired.vaults) {
     const found = matchVault(vault.name, vault.previousName, vault.id, live.vaults);
+    if (!found && vault.owner === 'service-account') {
+      waiting.add(vault.name);
+      continue;
+    }
     if (!found) {
       creates.push({ kind: 'create-vault', vault });
       continue;
@@ -108,11 +122,14 @@ function planVaults(desired: DesiredState, live: LiveState) {
   }
   const matched = new Set(ids.values());
   for (const vault of live.vaults) {
-    if (!matched.has(vault.id)) {
+    if (!matched.has(vault.id) && vault.name !== STATE_VAULT) {
       notes.push({ kind: 'undeclared-vault', name: vault.name });
     }
   }
-  return { creates, updates, notes, ids };
+  if (waiting.size > 0) {
+    notes.push({ kind: 'left-to-service-account', vaults: [...waiting] });
+  }
+  return { creates, updates, notes, ids, waiting };
 }
 
 /**
@@ -123,6 +140,7 @@ function planAccess(
   group: GroupManifest,
   groupId: string | undefined,
   vaultIds: ReadonlyMap<string, string>,
+  waiting: ReadonlySet<string>,
   live: LiveState,
 ): { grants: Grant[]; revokes: Revoke[] } {
   // What the group holds now, by the vault's declared name where it has one.
@@ -136,7 +154,7 @@ function planAccess(
   }
 
   const grants: Grant[] = [];
-  for (const [vault, set] of Object.entries(group.vaults)) {
+  for (const [vault, set] of Object.entries(group.vaults).filter(([v]) => !waiting.has(v))) {
     const from = held.get(vault)?.permissions ?? [];
     const add = set.filter((p) => !from.includes(p));
     if (add.length > 0) {
@@ -184,7 +202,7 @@ function liveGrantsOf(groupId: string, live: LiveState) {
   );
 }
 
-function matchVault(
+export function matchVault(
   name: string,
   previousName: string | undefined,
   id: string | undefined,
@@ -203,7 +221,11 @@ function matchVault(
   return unique('vault', name, live) ?? (previousName === undefined ? undefined : unique('vault', previousName, live));
 }
 
-function matchGroup(name: string, previousName: string | undefined, live: readonly LiveGroup[]): LiveGroup | undefined {
+export function matchGroup(
+  name: string,
+  previousName: string | undefined,
+  live: readonly LiveGroup[],
+): LiveGroup | undefined {
   return unique('group', name, live) ?? (previousName === undefined ? undefined : unique('group', previousName, live));
 }
 
@@ -223,7 +245,7 @@ function unique<T extends { readonly id: string; readonly name: string }>(
 }
 
 /** Name always; description only when both sides state one, so an unreported field never reads as drift. */
-function fieldChanges(
+export function fieldChanges(
   live: { readonly name: string; readonly description?: string },
   name: string,
   description: string | undefined,

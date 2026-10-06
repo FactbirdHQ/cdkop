@@ -59,17 +59,35 @@ export interface Revoke {
   readonly from: Permission[];
 }
 
-export type Change = CreateVault | UpdateVault | CreateGroup | UpdateGroup | Grant | Revoke;
+/**
+ * Set a group's access to exactly `permissions` by removing the group from
+ * the vault and granting it again. A service account plans this to narrow a
+ * grant, because it can't revoke part of one. The group has no access to the
+ * vault between the two calls. Gated by `--allow-delete`, because it can
+ * take access away.
+ */
+export interface Regrant {
+  readonly kind: 'regrant';
+  readonly vault: string;
+  readonly group: string;
+  readonly vaultId: string;
+  readonly groupId: string;
+  readonly permissions: Permission[];
+  /** What the last apply recorded, absent when no record exists. */
+  readonly from?: Permission[];
+}
+
+export type Change = CreateVault | UpdateVault | CreateGroup | UpdateGroup | Grant | Revoke | Regrant;
 
 /** What `--allow-delete=<scope>` unlocks, by scope. */
 export const DELETE_SCOPES = {
-  grants: ['revoke'],
+  grants: ['revoke', 'regrant'],
 } as const satisfies Record<string, readonly Change['kind'][]>;
 
 export type DeleteScope = keyof typeof DELETE_SCOPES;
 
-export function isDestructive(change: Change): change is Revoke {
-  return change.kind === 'revoke';
+export function isDestructive(change: Change): change is Revoke | Regrant {
+  return change.kind === 'revoke' || change.kind === 'regrant';
 }
 
 /** Facts a plan reports that call for no change. */
@@ -87,4 +105,8 @@ export type Note =
    * an identity provider would otherwise create, yet the account has the
    * group 1Password adds when provisioning is turned on.
    */
-  | { readonly kind: 'provisioning-enabled'; readonly groups: string[] };
+  | { readonly kind: 'provisioning-enabled'; readonly groups: string[] }
+  /** A service account's run skipped these declared vaults, which it doesn't own. */
+  | { readonly kind: 'left-to-administrator'; readonly vaults: string[] }
+  /** A person's run left these service-account vaults, and grants to them, for the service account to create. */
+  | { readonly kind: 'left-to-service-account'; readonly vaults: string[] };

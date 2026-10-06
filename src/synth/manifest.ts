@@ -33,7 +33,16 @@ export interface VaultManifest {
   readonly icon?: string;
   /** Applied when the vault is created; 1Password does not report it back. */
   readonly allowAdminsToManage?: boolean;
+  /**
+   * `service-account` when a service account creates and manages the vault.
+   * A run as a service account touches only these vaults; a run as a person
+   * manages every vault.
+   */
+  readonly owner?: VaultOwner;
 }
+
+/** Who creates and manages a vault in a run that can't manage them all. */
+export type VaultOwner = 'service-account';
 
 export interface GroupManifest {
   /** The group's name in 1Password, which is its identity. */

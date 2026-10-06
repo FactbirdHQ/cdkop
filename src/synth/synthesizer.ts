@@ -51,7 +51,7 @@ function vaultsOf(account: Account): VaultManifest[] {
     if (vault.node.scope !== account) {
       throw new Error(`Vault "${vault.vaultName}" (${vault.node.path}) must be declared directly under the Account.`);
     }
-    const { previousName, id, description, icon, allowAdminsToManage } = vault.props;
+    const { previousName, id, description, icon, allowAdminsToManage, owner } = vault.props;
     for (const name of [vault.vaultName, previousName].filter((n): n is string => n !== undefined)) {
       const other = seen.get(name);
       if (other !== undefined) {
@@ -66,6 +66,7 @@ function vaultsOf(account: Account): VaultManifest[] {
       ...(description === undefined ? {} : { description }),
       ...(icon === undefined ? {} : { icon }),
       ...(allowAdminsToManage === undefined ? {} : { allowAdminsToManage }),
+      ...(owner === undefined ? {} : { owner }),
     });
   }
   return out;

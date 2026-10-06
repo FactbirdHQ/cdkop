@@ -2,8 +2,9 @@
  * Everything cdkop reads from and writes to 1Password, behind an interface so
  * tests can run the whole plan/apply surface against an in-memory fake.
  *
- * The default implementation drives the `op` CLI. It needs a signed-in user
- * session: a service account cannot manage groups or vault permissions.
+ * The default implementation drives the `op` CLI, as a signed-in person or as
+ * the service account in OP_SERVICE_ACCOUNT_TOKEN. A service account sees only
+ * the vaults it created and none of any grant's permissions.
  */
 import { spawn } from 'node:child_process';
 
@@ -15,6 +16,11 @@ export interface LiveAccount {
   readonly email: string;
   readonly userId: string;
   readonly accountId: string;
+  /**
+   * Whether the session is a service account. A service account sees only
+   * the vaults it created and none of any grant's permissions.
+   */
+  readonly serviceAccount: boolean;
 }
 
 export interface LiveVault {
@@ -71,10 +77,14 @@ export interface OpClient {
   grant(vaultId: string, groupId: string, permissions: readonly Permission[]): Promise<void>;
   /** Take permissions away; `'all'` removes the group from the vault. */
   revoke(vaultId: string, groupId: string, permissions: readonly Permission[] | 'all'): Promise<void>;
+  /** A Document item's content, or undefined when the vault holds no item with that title. */
+  readDocument(vaultId: string, title: string): Promise<string | undefined>;
+  /** Create the Document item, or replace its content when one with that title exists. */
+  writeDocument(vaultId: string, title: string, content: string): Promise<void>;
 }
 
-/** Runs `op` with the given arguments and resolves to its stdout. */
-export type OpRunner = (args: readonly string[]) => Promise<string>;
+/** Runs `op` with the given arguments, and `input` on stdin, and resolves to its stdout. */
+export type OpRunner = (args: readonly string[], input?: string) => Promise<string>;
 
 /**
  * Spawn the `op` binary (or `$OP_BIN`). The arguments go straight to the
@@ -82,15 +92,18 @@ export type OpRunner = (args: readonly string[]) => Promise<string>;
  * as anything but one argument.
  */
 export function spawnOp(bin: string = process.env.OP_BIN ?? 'op'): OpRunner {
-  return (args) =>
+  return (args, input) =>
     new Promise((resolve, reject) => {
-      const child = spawn(bin, [...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+      const child = spawn(bin, [...args], { stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] });
+      if (input !== undefined) {
+        child.stdin?.end(input);
+      }
       let stdout = '';
       let stderr = '';
-      child.stdout.setEncoding('utf8').on('data', (chunk: string) => {
+      child.stdout?.setEncoding('utf8').on('data', (chunk: string) => {
         stdout += chunk;
       });
-      child.stderr.setEncoding('utf8').on('data', (chunk: string) => {
+      child.stderr?.setEncoding('utf8').on('data', (chunk: string) => {
         stderr += chunk;
       });
       child.on('error', (error) => reject(new Error(`Could not run ${bin}: ${error.message}`)));
@@ -121,17 +134,25 @@ export class CliOpClient implements OpClient {
     return (out.trim() === '' ? [] : JSON.parse(out)) as T;
   }
 
-  private async exec(args: readonly string[]): Promise<void> {
-    await this.run([...args, '--account', this.account]);
+  private async exec(args: readonly string[], input?: string): Promise<void> {
+    await this.run([...args, '--account', this.account], input);
   }
 
   async whoami(): Promise<LiveAccount> {
-    const me = await this.json<{ url?: string; email?: string; user_uuid?: string; account_uuid?: string }>(['whoami']);
+    const me = await this.json<{
+      url?: string;
+      email?: string;
+      user_uuid?: string;
+      account_uuid?: string;
+      user_type?: string;
+    }>(['whoami']);
     return {
       url: me.url ?? '',
       email: me.email ?? '',
       userId: me.user_uuid ?? '',
       accountId: me.account_uuid ?? '',
+      // A person's whoami carries no user_type; a service account's says so.
+      serviceAccount: me.user_type === 'SERVICE_ACCOUNT',
     };
   }
 
@@ -206,6 +227,30 @@ export class CliOpClient implements OpClient {
       args.push('--permissions', permissions.join(','));
     }
     await this.exec(args);
+  }
+
+  async readDocument(vaultId: string, title: string): Promise<string | undefined> {
+    const id = await this.findItem(vaultId, title);
+    return id === undefined
+      ? undefined
+      : this.run(['document', 'get', id, '--vault', vaultId, '--account', this.account]);
+  }
+
+  async writeDocument(vaultId: string, title: string, content: string): Promise<void> {
+    const id = await this.findItem(vaultId, title);
+    if (id === undefined) {
+      await this.exec(
+        ['document', 'create', '-', '--title', title, '--file-name', `${title}.json`, '--vault', vaultId],
+        content,
+      );
+    } else {
+      await this.exec(['document', 'edit', id, '-', '--vault', vaultId], content);
+    }
+  }
+
+  private async findItem(vaultId: string, title: string): Promise<string | undefined> {
+    const items = await this.json<Array<{ id: string; title: string }>>(['item', 'list', '--vault', vaultId]);
+    return items.find((i) => i.title === title)?.id;
   }
 }
 
