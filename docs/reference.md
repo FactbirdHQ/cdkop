@@ -151,7 +151,9 @@ creates, vault updates, group creates, group updates, grants, revocations.
 Notes follow the changes. "Warning" appears when the definition declares no
 `ScimProvisioning` and creates `externalGroup` groups itself, while the
 account has a `Provision Managers` group, which 1Password adds when
-provisioning is turned on. "Awaiting SCIM provisioning" lists external groups
+provisioning is turned on. It names the groups and says to add each to the
+provisioning integration's managed groups before its identity provider
+group is assigned. "Awaiting SCIM provisioning" lists external groups
 that do not exist in 1Password yet, with how many grants wait on each. "Not
 declared" lists live vaults and non-built-in groups the definition does not
 mention.
