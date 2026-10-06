@@ -77,7 +77,7 @@ Scope: the `Account`, or another `Group`.
 | `name` | `string` | Defaults to `externalGroup`, then to the construct id. With `externalGroup`, it must equal it. |
 | `previousName` | `string` | Matched when no live group carries `name`. Not allowed with `externalGroup`. |
 | `description` | `string` | Compared only when `op` reports a description for the live group. Not allowed with `externalGroup`. |
-| `externalGroup` | `string` | Display name of the Entra ID security group this group is provisioned from. cdkop never creates such a group, never edits its name or description, and never touches its members. |
+| `externalGroup` | `string` | Display name of the identity provider group this group is provisioned from. cdkop never edits its name or description and never touches its members. With a `ScimProvisioning` declared, cdkop never creates the group either, and waits for the bridge to. Without one, cdkop creates it. |
 | `vaults` | `VaultGrant[]` | The group's own grants. Its effective access also includes every ancestor `Group`'s. |
 
 `addSubGroup(id, props)` is `new Group(this, id, props)`.
@@ -89,7 +89,8 @@ vault of another account, or one group's own list grants a vault twice.
 
 ### `ScimProvisioning`
 
-Scope: the `Account`. At most one.
+Scope: the `Account`. At most one. Declaring it makes the SCIM bridge, not
+cdkop, the creator of every `externalGroup` group.
 
 | Prop | Type | Default | |
 | - | - | - | - |
@@ -147,7 +148,12 @@ Access prints as `view`, `edit` or `manage` when it is exactly that level,
 otherwise as the list of permissions. Changes run in this order: vault
 creates, vault updates, group creates, group updates, grants, revocations.
 
-Notes follow the changes. "Awaiting SCIM provisioning" lists external groups
+Notes follow the changes. "Warning" appears when the definition declares no
+`ScimProvisioning` and creates `externalGroup` groups itself, while the
+account has a `Provision Managers` group, which 1Password adds when
+provisioning is turned on. It names the groups and says to add each to the
+provisioning integration's managed groups before its identity provider
+group is assigned. "Awaiting SCIM provisioning" lists external groups
 that do not exist in 1Password yet, with how many grants wait on each. "Not
 declared" lists live vaults and non-built-in groups the definition does not
 mention.

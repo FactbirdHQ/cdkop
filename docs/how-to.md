@@ -105,6 +105,28 @@ directly. `plan` shows the parent in brackets when it creates a group.
    its grants back.
 5. Run `cdkop apply --yes` to grant the access.
 
+These steps need `ScimProvisioning` in the definition. Without it, cdkop
+creates the group in step 2's apply instead of waiting for the bridge.
+
+## Use identity provider group names before provisioning is set up
+
+1. Declare each group with `externalGroup` set to the name its identity
+   provider group has, or will have. Leave `ScimProvisioning` out.
+2. Run `cdkop apply --yes`. cdkop creates the groups and grants their
+   access. Add members in the 1Password console.
+3. When provisioning is set up, add each group to the provisioning
+   integration's managed groups in the 1Password console, so the bridge
+   takes over its members. Do it before step 4: 1Password's setup guide
+   warns that a group missing from that list can end up duplicated.
+4. Declare `ScimProvisioning` and run `cdkop scim --yes`, which assigns the
+   identity provider groups. The groups already exist, so `plan` has
+   nothing to wait for.
+
+Handing a group to provisioning is one-way as far as 1Password documents
+it. Once the integration manages a group, the identity provider owns its
+name and members, and no way to release it is documented short of turning
+provisioning off for the whole account. Its vault access stays with cdkop.
+
 ## Rotate the SCIM bridge token
 
 1. Generate a new bearer token in 1Password's provisioning settings.

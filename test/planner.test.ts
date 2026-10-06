@@ -11,6 +11,19 @@ function desired(vaults: VaultManifest[], groups: GroupManifest[]): DesiredState
   return { version: 1, account: { signInAddress: 'example.1password.com' }, vaults, groups };
 }
 
+/** A definition whose identity provider creates the external groups. */
+function withScim(d: DesiredState): DesiredState {
+  return {
+    ...d,
+    scim: {
+      tenantId: 't',
+      applicationDisplayName: 'a',
+      tokenFrom: 'T',
+      groups: d.groups.flatMap((g) => g.externalGroup ?? []),
+    },
+  };
+}
+
 async function planAgainst(state: FakeOpState, d: DesiredState) {
   return plan(d, await readLiveState(new FakeOp(state)));
 }
@@ -123,18 +136,11 @@ describe('plan', () => {
     expect(result.notes).toEqual([{ kind: 'undeclared-group', name: 'Marketing' }]);
   });
 
-  test('an external group that does not exist yet is awaited, never created', async () => {
+  test('with SCIM declared, an external group that does not exist yet is awaited, never created', async () => {
     const result = await planAgainst(
       { vaults: [{ id: 'v1', name: 'Shared' }] },
-      desired(
-        [{ name: 'Shared' }],
-        [
-          {
-            name: 'SG-Sales',
-            externalGroup: 'SG-Sales',
-            vaults: { Shared: view },
-          },
-        ],
+      withScim(
+        desired([{ name: 'Shared' }], [{ name: 'SG-Sales', externalGroup: 'SG-Sales', vaults: { Shared: view } }]),
       ),
     );
     expect(result.changes).toEqual([]);
@@ -146,6 +152,25 @@ describe('plan', () => {
         grants: 1,
       },
     ]);
+  });
+
+  test('without SCIM declared, cdkop creates an external group and grants it access', async () => {
+    const result = await planAgainst(
+      { vaults: [{ id: 'v1', name: 'Shared' }] },
+      desired([{ name: 'Shared' }], [{ name: 'SG-Sales', externalGroup: 'SG-Sales', vaults: { Shared: view } }]),
+    );
+    expect(result.changes.map((c) => c.kind)).toEqual(['create-group', 'grant']);
+    expect(result.notes).toEqual([]);
+  });
+
+  test('creating external groups in an account where provisioning looks enabled warns', async () => {
+    const result = await planAgainst(
+      { groups: [{ id: 'g0', name: 'Provision Managers' }] },
+      desired([], [{ name: 'SG-Sales', externalGroup: 'SG-Sales', vaults: {} }]),
+    );
+    expect(result.changes.map((c) => c.kind)).toEqual(['create-group']);
+    expect(result.notes).toEqual([{ kind: 'provisioning-enabled', groups: ['SG-Sales'] }]);
+    expect(renderPlan('example.1password.com', result)).toContain('provisioning looks enabled');
   });
 
   test('an external group is granted access but its description is not managed', async () => {

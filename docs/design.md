@@ -85,9 +85,10 @@ would grant access to the wrong one.
 ## SCIM, split in two
 
 The SCIM bridge is infrastructure, deployed wherever you host it, with a
-`scimsession` credential that lives outside git. cdkop leaves it alone. `ScimProvisioning` declares the Entra half, meaning which security
-groups the enterprise application pushes, and `cdkop scim` reconciles that
-over Microsoft Graph.
+`scimsession` credential that lives outside git. cdkop leaves it alone.
+`ScimProvisioning` declares the Entra half, meaning which security groups
+the enterprise application pushes, and `cdkop scim` reconciles that over
+Microsoft Graph.
 
 `cdkop scim` only adds. It creates no application and no provisioning job,
 because provisioning already runs and a second job aimed at the same bridge
@@ -100,9 +101,25 @@ provisioned groups' memberships.
 A group's `externalGroup` does two jobs. It names the Entra group `scim`
 assigns, and it names the 1Password group the bridge creates, which takes the
 Entra display name. Keeping both in one prop stops the two names drifting.
-Until the group appears in 1Password, its grants wait, and `plan` says so
-instead of creating a hand-made group that the bridge would later collide
-with.
+Who creates the group depends on whether the definition declares
+`ScimProvisioning`. With it, the bridge does, and the grants wait until the
+group appears, because a group cdkop made alongside would race the bridge
+for the name. Without it, there is no bridge to wait for, so cdkop creates
+the group under the identity provider's name. When provisioning arrives
+later, the existing group is added to the provisioning integration's managed
+groups in the 1Password console, and the integration takes ownership: from
+then on a rename or a membership change has to come from the identity
+provider. The group keeps its vault access, which is still cdkop's. The
+order matters, because 1Password's setup guide warns that a group missing
+from the managed list can end up duplicated, so the group joins the list
+before its identity provider group is assigned to the application. Nothing
+documents releasing a group again short of turning provisioning off, so the
+handover counts as one-way.
+
+1Password has no API for the managed list, so cdkop can't see whether a
+group is on it. The only signal it has is the `Provision Managers` group
+1Password adds when provisioning is turned on, and `plan` warns, with that
+order, when it sees that group while creating external groups itself.
 
 The Graph client is a trimmed copy of cdkgithub's. The two tools share a
 tenant but no code, and a shared package for about two hundred lines did not
