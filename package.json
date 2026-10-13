@@ -42,7 +42,7 @@
     "@tsconfig/node-ts": "^23.6.4",
     "@tsconfig/node22": "^22.0.6",
     "@types/bun": "^1.2.0",
-    "@types/node": "^24",
-    "typescript": "^5.7.0"
+    "@types/node": "^26",
+    "typescript": "^7.0.2"
   }
 }
