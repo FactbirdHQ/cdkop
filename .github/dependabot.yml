@@ -1,0 +1,33 @@
+version: 2
+
+# The cooldown holds back a release for a few days so a compromised version has
+# time to be pulled first. Security updates ignore it.
+updates:
+  - package-ecosystem: bun
+    directory: '/'
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+      semver-minor-days: 7
+      semver-patch-days: 3
+    groups:
+      bun:
+        patterns:
+          - '*'
+  # cicd/main.ts generates .github/workflows, so a bump here also has to land
+  # in cicd/main.ts before the CI drift check passes.
+  - package-ecosystem: github-actions
+    directory: '/'
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+      semver-minor-days: 7
+      semver-patch-days: 3
+    groups:
+      github-actions:
+        patterns:
+          - '*'
