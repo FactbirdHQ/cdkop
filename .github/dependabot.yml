@@ -16,15 +16,3 @@ updates:
       bun:
         patterns:
           - '*'
-  # cicd/main.ts generates .github/workflows, so a bump here also has to land
-  # in cicd/main.ts before the CI drift check passes.
-  - package-ecosystem: github-actions
-    directory: '/'
-    schedule:
-      interval: weekly
-    cooldown:
-      default-days: 7
-    groups:
-      github-actions:
-        patterns:
-          - '*'
