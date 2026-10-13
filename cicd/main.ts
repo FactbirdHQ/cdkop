@@ -124,4 +124,49 @@ new Job(release, 'publish', {
   ],
 });
 
+/**
+ * Dependabot never reads devenv.lock, and nixpkgs follows
+ * cachix/devenv-nixpkgs/rolling, which moves about once a month. GitHub runs no
+ * workflows on a pull request GITHUB_TOKEN opens until someone pushes to it or
+ * reopens it.
+ */
+const devenvUpdate = new Workflow(stack, 'devenv-update', {
+  name: 'devenv update',
+  on: {
+    schedule: [{ cron: '0 6 3 * *' }],
+    workflowDispatch: null,
+  },
+  permissions: { contents: 'read' },
+});
+
+new Job(devenvUpdate, 'update', {
+  runsOn: runner,
+  permissions: { contents: 'write', pullRequests: 'write' },
+  steps: [
+    checkout,
+    {
+      name: 'Install Nix',
+      uses: 'cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24', // v31.11.1
+    },
+    { name: 'Install devenv', run: 'nix profile add nixpkgs#devenv' },
+    { name: 'Update devenv.lock', run: 'devenv update' },
+    {
+      name: 'Open pull request',
+      uses: 'peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1', // v8.1.1
+      with: {
+        branch: 'chore/devenv-update',
+        'add-paths': 'devenv.lock',
+        'commit-message': 'chore: update devenv.lock',
+        title: 'chore: update devenv.lock',
+        body: [
+          'The monthly `devenv update` run moved the inputs in devenv.lock.',
+          '',
+          'GITHUB_TOKEN opened this pull request, so CI has not run on it. Push a commit or close and reopen the pull request to start it.',
+        ].join('\n'),
+        'delete-branch': true,
+      },
+    },
+  ],
+});
+
 app.synth();
