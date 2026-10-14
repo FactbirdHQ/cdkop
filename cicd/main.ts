@@ -10,25 +10,34 @@
  * runs `plan` or `apply` against a live account: both need a signed-in
  * administrator session, which a CI runner does not have and should not.
  */
-import { App, Job, RunnerLabel, Stack, setupNodeV6, Workflow } from '@factbird/cdkactions';
+import {
+  App,
+  checkoutV7,
+  createPullRequestV8,
+  DependabotActionPinSync,
+  installNixActionV31,
+  Job,
+  RunnerLabel,
+  Stack,
+  setupBunV2,
+  setupNodeV6,
+  Workflow,
+} from '@factbird/cdkactions';
 
 /**
- * A third-party action runs by commit, not by tag: whoever controls the tag
- * can move it, and the release job holds a token that publishes to npm.
+ * An action runs by commit, not by tag: whoever controls the tag can move it,
+ * and the release job holds a token that publishes to npm. Synth checks that
+ * each version's tag still points at its commit.
  */
-const setupBun = {
-  name: 'Setup Bun',
-  uses: 'oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6', // v2.2.0
-  with: { 'bun-version': 'latest' },
-};
+const checkout = checkoutV7.pinned('3d3c42e5aac5ba805825da76410c181273ba90b1', 'v7.0.1');
+const setupBun = setupBunV2.pinned('0c5077e51419868618aeaa5fe8019c62421857d6', 'v2.2.0');
+const setupNode = setupNodeV6.pinned('249970729cb0ef3589644e2896645e5dc5ba9c38', 'v6.5.0');
+const installNix = installNixActionV31.pinned('13d8dd58da0234aa297dedd986986ccb8e7f3e24', 'v31.11.1');
+const createPullRequest = createPullRequestV8.pinned('5f6978faf089d4d20b00c7766989d076bb2fc7f1', 'v8.1.1');
 
-/**
- * Checkout by commit too. cdkactions' `checkoutV4()` runs on Node 20, which
- * GitHub has deprecated, and it has no helper for a later major.
- */
-const checkout = {
-  uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1', // v7.0.1
-};
+const checkoutStep = () => checkout({ id: 'checkout' });
+const setupBunStep = () => setupBun({ id: 'bun', name: 'Setup Bun', with: { bunVersion: 'latest' } });
+const installStep = { name: 'Install', run: 'bun install --frozen-lockfile' };
 
 /**
  * A named image rather than `ubuntu-latest`, so the image a job runs on changes
@@ -56,9 +65,9 @@ const ci = new Workflow(stack, 'ci', {
 new Job(ci, 'verify', {
   runsOn: runner,
   steps: [
-    checkout,
-    setupBun,
-    { name: 'Install', run: 'bun install --frozen-lockfile' },
+    checkoutStep(),
+    setupBunStep(),
+    installStep,
     { name: 'Typecheck', run: 'bun run build' },
     // Unit tests cover the plan/apply surface with an in-memory 1Password fake.
     { name: 'Test', run: 'bun test' },
@@ -95,13 +104,13 @@ new Job(release, 'publish', {
   concurrency: { group: 'npm-publish', cancelInProgress: false },
   permissions: { contents: 'read', idToken: 'write' },
   steps: [
-    checkout,
-    setupBun,
-    { name: 'Install', run: 'bun install --frozen-lockfile' },
+    checkoutStep(),
+    setupBunStep(),
+    installStep,
     { name: 'Typecheck', run: 'bun run build' },
     { name: 'Test', run: 'bun test' },
     // Trusted publishing needs Node 22.14 and npm 11.5.1 or later.
-    setupNodeV6({
+    setupNode({
       id: 'node',
       with: { nodeVersion: '24', registryUrl: 'https://registry.npmjs.org' },
     }),
@@ -143,30 +152,38 @@ new Job(devenvUpdate, 'update', {
   runsOn: runner,
   permissions: { contents: 'write', pullRequests: 'write' },
   steps: [
-    checkout,
-    {
-      name: 'Install Nix',
-      uses: 'cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24', // v31.11.1
-    },
+    checkoutStep(),
+    installNix({ name: 'Install Nix' }),
     { name: 'Install devenv', run: 'nix profile add nixpkgs#devenv' },
     { name: 'Update devenv.lock', run: 'devenv update' },
-    {
+    createPullRequest({
+      id: 'pull-request',
       name: 'Open pull request',
-      uses: 'peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1', // v8.1.1
       with: {
         branch: 'chore/devenv-update',
-        'add-paths': 'devenv.lock',
-        'commit-message': 'chore: update devenv.lock',
+        addPaths: 'devenv.lock',
+        commitMessage: 'chore: update devenv.lock',
         title: 'chore: update devenv.lock',
         body: [
           'The monthly `devenv update` run moved the inputs in devenv.lock.',
           '',
           'GITHUB_TOKEN opened this pull request, so CI has not run on it. Push a commit or close and reopen the pull request to start it.',
         ].join('\n'),
-        'delete-branch': true,
+        deleteBranch: true,
       },
-    },
+    }),
   ],
+});
+
+/**
+ * The push job reads APP_ID and APP_PEM from this repository's Dependabot
+ * secrets. Organization Dependabot secrets do not reach a public repository.
+ */
+new DependabotActionPinSync(stack, 'dependabot-action-pin-sync', {
+  sources: ['cicd/main.ts'],
+  synthCommand: 'bun run synth:workflows',
+  setupSteps: [setupBunStep(), installStep],
+  runsOn: runner,
 });
 
 app.synth();
