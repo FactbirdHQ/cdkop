@@ -21,3 +21,6 @@ inputs:
         follows: git-hooks
       treefmt-nix:
         follows: treefmt-nix
+nixpkgs:
+  permitted_unfree_packages:
+    - 1password-cli
